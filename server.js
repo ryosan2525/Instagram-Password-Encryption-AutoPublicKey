@@ -5,7 +5,14 @@ const { encryptPassword } = require('./instagram_enc');
 
 const PORT = process.env.PORT || 3000;
 
-// Reusing key fetching logic
+// Fallback keys (Update these if they change and dynamic fetch fails)
+// Last Updated: 2025-12-16
+const FALLBACK_KEYS = {
+    keyId: '170',
+    publicKey: '76588afa109d44bd3a90d0e9e679b4f6b1658034a8e431482331bcec5aefca4d',
+    version: '10'
+};
+
 function fetchInstagramKeys() {
     return new Promise((resolve, reject) => {
         const options = {
@@ -21,7 +28,6 @@ function fetchInstagramKeys() {
         };
 
         const req = https.request(options, (res) => {
-            // Priority 1: Check headers
             const keyIdHeader = res.headers['ig-set-password-encryption-web-key-id'];
             const pubKeyHeader = res.headers['ig-set-password-encryption-web-pub-key'];
             const versionHeader = res.headers['ig-set-password-encryption-web-key-version'];
@@ -32,14 +38,13 @@ function fetchInstagramKeys() {
                     publicKey: pubKeyHeader,
                     version: versionHeader || '10'
                 });
-                req.fullData = ''; // Optimization: Don't need body if headers have it
+                req.fullData = '';
                 return;
             }
 
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                // Priority 2: HTML Scan
                 const keyIDMatch = data.match(/"key_id":"(\d+)"/);
                 const publicKeyMatch = data.match(/"public_key":"([a-f0-9]+)"/);
                 const versionMatch = data.match(/"version":"(\d+)"/);
@@ -51,7 +56,6 @@ function fetchInstagramKeys() {
                         version: versionMatch ? versionMatch[1] : '10'
                     });
                 } else {
-                    // Priority 3: Config Object Scan
                     const configMatch = data.match(/encryption":\{"key_id":"(\d+)","public_key":"([a-f0-9]+)"/);
                     if (configMatch) {
                         resolve({
@@ -60,13 +64,18 @@ function fetchInstagramKeys() {
                             version: '10'
                         });
                     } else {
-                        reject(new Error('Could not find encryption keys on Instagram login page'));
+                        // Log the error but resolve with fallback
+                        console.error(`[Warning] Dynamic fetch failed (Status: ${res.statusCode}). Using fallback keys.`);
+                        resolve(FALLBACK_KEYS);
                     }
                 }
             });
         });
 
-        req.on('error', (e) => reject(e));
+        req.on('error', (e) => {
+            console.error(`[Warning] Network error during fetch: ${e.message}. Using fallback keys.`);
+            resolve(FALLBACK_KEYS);
+        });
         req.end();
     });
 }
@@ -75,7 +84,6 @@ const requestHandler = (req, res) => {
     const queryObject = url.parse(req.url, true).query;
     const pathname = url.parse(req.url, true).pathname;
 
-    // CORS Headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Content-Type', 'application/json');
@@ -127,5 +135,4 @@ server.listen(PORT, (err) => {
         return console.log('something bad happened', err);
     }
     console.log(`Server is listening on port ${PORT}`);
-    console.log(`Test URL: http://localhost:${PORT}/encrypt?password=test123`);
 });
